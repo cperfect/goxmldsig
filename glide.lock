@@ -1,0 +1,21 @@
+hash: 76ce76fdde25326367181550986083abb3cf63d3db8a187f2bb2a27fbd32149f
+updated: 2018-05-08T09:16:41.236043+10:00
+imports:
+- name: github.com/beevik/etree
+  version: 9d7e8feddccb4ed1b8afb54e368bd323d2ff652c
+- name: github.com/jonboulle/clockwork
+  version: 2eee05ed794112d45db504eb05aa693efd2b8b09
+testImports:
+- name: github.com/davecgh/go-spew
+  version: 6d212800a42e8ab5c146b8ace3490ee17e5225f9
+  subpackages:
+  - spew
+- name: github.com/pmezard/go-difflib
+  version: d8ed2627bdf02c080bf22230dbb337003b7aba2d
+  subpackages:
+  - difflib
+- name: github.com/stretchr/testify
+  version: 12b6f73e6084dad08a7c6e575284b177ecafbc71
+  subpackages:
+  - assert
+  - require

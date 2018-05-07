@@ -1,0 +1,11 @@
+package: github.com/russellhaering/goxmldsig
+import:
+- package: github.com/beevik/etree
+  version: ^1.0.1
+- package: github.com/jonboulle/clockwork
+  version: ^0.1.0
+testImport:
+- package: github.com/stretchr/testify
+  version: ^1.2.1
+  subpackages:
+  - require

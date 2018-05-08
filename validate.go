@@ -104,14 +104,16 @@ func removeElementAtPath(el *etree.Element, path []int) bool {
 // the set of transformations described by the ref applied.
 //
 // The functionality of transform is currently very limited and purpose-specific.
+// CDP doesn't seem to actually do any c14n transforms: only applies enveloped transform
 func (ctx *ValidationContext) transform(
 	el *etree.Element,
 	sig *types.Signature,
 	ref *types.Reference) (*etree.Element, Canonicalizer, error) {
 	transforms := ref.Transforms.Transforms
 
-	if len(transforms) != 2 {
-		return nil, nil, errors.New("Expected Enveloped and C14N transforms")
+	//C14n transform is now optional!
+	if len(transforms) < 1 {
+		return nil, nil, errors.New("Expected Enveloped transform")
 	}
 
 	// map the path to the passed signature relative to the passed root, in
@@ -155,19 +157,22 @@ func (ctx *ValidationContext) transform(
 		}
 	}
 
-	if canonicalizer == nil {
-		return nil, nil, errors.New("Expected canonicalization transform")
-	}
+	// if canonicalizer == nil {
+	// 	return nil, nil, errors.New("Expected canonicalization transform")
+	// }
 
 	return el, canonicalizer, nil
 }
 
-func (ctx *ValidationContext) digest(el *etree.Element, digestAlgorithmId string, canonicalizer Canonicalizer) ([]byte, error) {
-	data, err := canonicalizer.Canonicalize(el)
-	if err != nil {
-		return nil, err
+func (ctx *ValidationContext) digest(el *etree.Element, digestAlgorithmId string, canonicalizer Canonicalizer) (data []byte, err error) {
+	if canonicalizer != nil {
+		data, err = canonicalizer.Canonicalize(el)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		data = []byte(el.Text())
 	}
-
 	digestAlgorithm, ok := digestAlgorithmsByIdentifier[digestAlgorithmId]
 	if !ok {
 		return nil, errors.New("Unknown digest algorithm: " + digestAlgorithmId)
@@ -249,7 +254,7 @@ func (ctx *ValidationContext) validateSignature(el *etree.Element, sig *types.Si
 
 	// Perform all transformations listed in the 'SignedInfo'
 	// Basically, this means removing the 'SignedInfo'
-	transformed, canonicalizer, err := ctx.transform(el, sig, ref)
+	transformed, transC14n, err := ctx.transform(el, sig, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +262,7 @@ func (ctx *ValidationContext) validateSignature(el *etree.Element, sig *types.Si
 	digestAlgorithm := ref.DigestAlgo.Algorithm
 
 	// Digest the transformed XML and compare it to the 'DigestValue' from the 'SignedInfo'
-	digest, err := ctx.digest(transformed, digestAlgorithm, canonicalizer)
+	digest, err := ctx.digest(transformed, digestAlgorithm, transC14n)
 	if err != nil {
 		return nil, err
 	}
@@ -277,14 +282,48 @@ func (ctx *ValidationContext) validateSignature(el *etree.Element, sig *types.Si
 		return nil, errors.New("Could not decode signature")
 	}
 
+	//get c14n specified in the SignedInfo: this element is required. Note that
+	//it seems that there is no requirement in the spec for trans14n algo == c14nMethod algo
+	c14nMethodC14n, err := deriveC14n(sig.SignedInfo.CanonicalizationMethod.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+
 	// Actually verify the 'SignedInfo' was signed by a trusted source
 	signatureMethod := sig.SignedInfo.SignatureMethod.Algorithm
-	err = ctx.verifySignedInfo(sig, canonicalizer, signatureMethod, cert, decodedSignature)
+	err = ctx.verifySignedInfo(sig, c14nMethodC14n, signatureMethod, cert, decodedSignature)
 	if err != nil {
 		return nil, err
 	}
 
 	return transformed, nil
+}
+
+func deriveC14n(algo string) (canonicalizer Canonicalizer, error error) {
+
+	switch AlgorithmID(algo) {
+
+	case CanonicalXML10ExclusiveAlgorithmId:
+		// var prefixList string
+		// if transform.InclusiveNamespaces != nil {
+		// 	prefixList = transform.InclusiveNamespaces.PrefixList
+		// }
+
+		canonicalizer = MakeC14N10ExclusiveCanonicalizerWithPrefixList("") //prefixList)
+
+	case CanonicalXML11AlgorithmId:
+		canonicalizer = MakeC14N11Canonicalizer()
+
+	case CanonicalXML10RecAlgorithmId:
+		canonicalizer = MakeC14N10RecCanonicalizer()
+
+	case CanonicalXML10CommentAlgorithmId:
+		canonicalizer = MakeC14N10CommentCanonicalizer()
+
+	default:
+		return nil, errors.New("Unknown Canonicalization Algorithm: " + algo)
+	}
+	return canonicalizer, nil
 }
 
 func contains(roots []*x509.Certificate, cert *x509.Certificate) bool {

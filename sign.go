@@ -15,21 +15,32 @@ import (
 )
 
 type SigningContext struct {
-	Hash          crypto.Hash
-	KeyStore      X509KeyStore
-	IdAttribute   string
-	Prefix        string
-	Canonicalizer Canonicalizer
+	Hash              crypto.Hash
+	KeyStore          X509KeyStore
+	IdAttribute       string
+	Prefix            string
+	Canonicalizer     Canonicalizer
+	skipC14nTransform bool
 }
 
 func NewDefaultSigningContext(ks X509KeyStore) *SigningContext {
 	return &SigningContext{
-		Hash:          crypto.SHA256,
-		KeyStore:      ks,
-		IdAttribute:   DefaultIdAttr,
-		Prefix:        DefaultPrefix,
-		Canonicalizer: MakeC14N11Canonicalizer(),
+		Hash:              crypto.SHA256,
+		KeyStore:          ks,
+		IdAttribute:       DefaultIdAttr,
+		Prefix:            DefaultPrefix,
+		Canonicalizer:     MakeC14N11Canonicalizer(),
+		skipC14nTransform: false,
 	}
+}
+
+/*  Do not apply C14n as transform to the data to be signed.
+In general do not use this but there are implementations
+where the data is not C14nized and therefore signature
+validation fails (IBM WAS I am looking at you!)
+*/
+func (ctx *SigningContext) NoCanonicalizationTransform() {
+	ctx.skipC14nTransform = false
 }
 
 func (ctx *SigningContext) SetSignatureMethod(algorithmID string) error {
@@ -43,14 +54,18 @@ func (ctx *SigningContext) SetSignatureMethod(algorithmID string) error {
 	return nil
 }
 
-func (ctx *SigningContext) digest(el *etree.Element) ([]byte, error) {
-	canonical, err := ctx.Canonicalizer.Canonicalize(el)
-	if err != nil {
-		return nil, err
+func (ctx *SigningContext) digest(el *etree.Element, noC14n bool) (data []byte, err error) {
+	if noC14n {
+		data = []byte(el.Text())
+	} else {
+		data, err = ctx.Canonicalizer.Canonicalize(el)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	hash := ctx.Hash.New()
-	_, err = hash.Write(canonical)
+	_, err = hash.Write(data)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +84,7 @@ func (ctx *SigningContext) constructSignedInfo(el *etree.Element, enveloped bool
 		return nil, errors.New("unsupported signature method")
 	}
 
-	digest, err := ctx.digest(el)
+	digest, err := ctx.digest(el, false) //signed info must always be c14nzed
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +118,10 @@ func (ctx *SigningContext) constructSignedInfo(el *etree.Element, enveloped bool
 		envelopedTransform := ctx.createNamespacedElement(transforms, TransformTag)
 		envelopedTransform.CreateAttr(AlgorithmAttr, EnvelopedSignatureAltorithmId.String())
 	}
-	canonicalizationAlgorithm := ctx.createNamespacedElement(transforms, TransformTag)
-	canonicalizationAlgorithm.CreateAttr(AlgorithmAttr, string(ctx.Canonicalizer.Algorithm()))
+	if !ctx.skipC14nTransform {
+		canonicalizationAlgorithm := ctx.createNamespacedElement(transforms, TransformTag)
+		canonicalizationAlgorithm.CreateAttr(AlgorithmAttr, string(ctx.Canonicalizer.Algorithm()))
+	}
 
 	// /SignedInfo/Reference/DigestMethod
 	digestMethod := ctx.createNamespacedElement(reference, DigestMethodTag)
@@ -166,7 +183,7 @@ func (ctx *SigningContext) ConstructSignature(el *etree.Element, enveloped bool)
 		return nil, err
 	}
 
-	digest, err := ctx.digest(detatchedSignedInfo)
+	digest, err := ctx.digest(detatchedSignedInfo, ctx.skipC14nTransform)
 	if err != nil {
 		return nil, err
 	}
